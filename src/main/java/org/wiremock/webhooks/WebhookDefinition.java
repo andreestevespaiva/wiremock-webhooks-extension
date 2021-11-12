@@ -3,43 +3,117 @@ package org.wiremock.webhooks;
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonProperty;
-import com.github.tomakehurst.wiremock.http.Body;
-import com.github.tomakehurst.wiremock.http.HttpHeader;
-import com.github.tomakehurst.wiremock.http.HttpHeaders;
-import com.github.tomakehurst.wiremock.http.RequestMethod;
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.github.tomakehurst.wiremock.common.Metadata;
+import com.github.tomakehurst.wiremock.extension.Parameters;
+import com.github.tomakehurst.wiremock.http.*;
 
-import java.net.URI;
+import java.util.Collection;
 import java.util.List;
+import java.util.stream.Collectors;
 
 import static com.google.common.collect.Lists.newArrayList;
+import static java.util.Collections.singletonList;
 
 public class WebhookDefinition {
     
     private RequestMethod method;
-    private URI url;
+    private String url;
     private List<HttpHeader> headers;
     private Body body = Body.none();
+    private DelayDistribution delay;
+    private Parameters parameters;
 
     @JsonCreator
     public WebhookDefinition(@JsonProperty("method") RequestMethod method,
-                             @JsonProperty("url") URI url,
+                             @JsonProperty("url") String url,
                              @JsonProperty("headers") HttpHeaders headers,
                              @JsonProperty("body") String body,
-                             @JsonProperty("base64Body") String base64Body) {
+                             @JsonProperty("jsonBody") JsonNode jsonBody,
+                             @JsonProperty("base64Body") String base64Body,
+                             @JsonProperty("delay") DelayDistribution delay,
+                             @JsonProperty("parameters") Parameters parameters) {
         this.method = method;
         this.url = url;
         this.headers = newArrayList(headers.all());
-        this.body = Body.fromOneOf(null, body, null, base64Body);
+        this.body = Body.fromOneOf(null,body,jsonBody,base64Body);
+        this.delay = delay;
+        this.parameters = parameters;
     }
 
     public WebhookDefinition() {
+    }
+
+    public static WebhookDefinition from(Parameters parameters) {
+        String body = parameters.getString("body", null);
+        JsonNode jsonBody = getBody(parameters);
+        return new WebhookDefinition(
+                new RequestMethod(parameters.getString("method", "GET")),
+                parameters.getString("url"),
+                toHttpHeaders(parameters.getMetadata("headers")),
+                body,
+                jsonBody,
+                parameters.getString("base64Body", null),
+                getDelayDistribution(parameters),
+                parameters
+        );
+    }
+
+    private static JsonNode getBody(Parameters parameters) {
+        Object body = parameters.get("jsonBody");
+        if (body == null) {
+            return null;
+        }
+        ObjectMapper mapper = new ObjectMapper();
+        return mapper.convertValue(body, JsonNode.class);
+    }
+
+    private static HttpHeaders toHttpHeaders(Metadata headerMap) {
+        if (headerMap == null || headerMap.isEmpty()) {
+            return new HttpHeaders();
+        }
+        return new HttpHeaders(
+                headerMap.entrySet().stream()
+                        .map(entry -> new HttpHeader(
+                                entry.getKey(),
+                                getHeaderValues(entry.getValue()))
+                        )
+                        .collect(Collectors.toList())
+        );
+    }
+    @SuppressWarnings("unchecked")
+    private static Collection<String> getHeaderValues(Object obj) {
+        if (obj == null) {
+            return null;
+        }
+
+        if (obj instanceof List) {
+            return ((List<String>) obj);
+        }
+
+        return singletonList(obj.toString());
+    }
+
+    private static DelayDistribution getDelayDistribution(Parameters parameters) {
+        Metadata delayParams = null;
+
+        try {
+            delayParams = parameters.getMetadata("delay");
+        }catch (Exception ex) {
+            return null;
+        }
+
+        return delayParams.as(DelayDistribution.class);
     }
 
     public RequestMethod getMethod() {
         return method;
     }
 
-    public URI getUrl() {
+    public String getUrl() {
         return url;
     }
 
@@ -65,13 +139,8 @@ public class WebhookDefinition {
         return this;
     }
 
-    public WebhookDefinition withUrl(URI url) {
-        this.url = url;
-        return this;
-    }
-
     public WebhookDefinition withUrl(String url) {
-        withUrl(URI.create(url));
+        this.url = url;
         return this;
     }
 
@@ -97,5 +166,9 @@ public class WebhookDefinition {
     public WebhookDefinition withBinaryBody(byte[] body) {
         this.body = new Body(body);
         return this;
+    }
+
+    public Parameters getExtraParameters() {
+        return this.parameters;
     }
 }

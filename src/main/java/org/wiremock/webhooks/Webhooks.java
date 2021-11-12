@@ -1,11 +1,13 @@
 package org.wiremock.webhooks;
 
+import com.github.tomakehurst.wiremock.common.Metadata;
 import com.github.tomakehurst.wiremock.common.Notifier;
 import com.github.tomakehurst.wiremock.core.Admin;
 import com.github.tomakehurst.wiremock.extension.Parameters;
 import com.github.tomakehurst.wiremock.extension.PostServeAction;
-import com.github.tomakehurst.wiremock.http.HttpClientFactory;
-import com.github.tomakehurst.wiremock.http.HttpHeader;
+import com.github.tomakehurst.wiremock.extension.responsetemplating.RequestTemplateModel;
+import com.github.tomakehurst.wiremock.extension.responsetemplating.ResponseTemplateTransformer;
+import com.github.tomakehurst.wiremock.http.*;
 import com.github.tomakehurst.wiremock.stubbing.ServeEvent;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
@@ -16,24 +18,31 @@ import org.apache.http.entity.ByteArrayEntity;
 import org.apache.http.impl.client.CloseableHttpClient;
 import org.apache.http.util.EntityUtils;
 import org.wiremock.webhooks.interceptors.WebhookTransformer;
+import org.wiremock.webhooks.tranformer.ResponseTemplateModel;
+import org.wiremock.webhooks.tranformer.TemplateEngine;
 
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
+import java.util.*;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.stream.Collectors;
 
 import static com.github.tomakehurst.wiremock.common.Exceptions.throwUnchecked;
 import static com.github.tomakehurst.wiremock.common.LocalNotifier.notifier;
 import static com.github.tomakehurst.wiremock.http.HttpClientFactory.getHttpRequestFor;
+import static java.util.Collections.singletonList;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static java.util.stream.Collectors.toList;
 
 public class Webhooks extends PostServeAction {
 
     private final ScheduledExecutorService scheduler;
     private final CloseableHttpClient httpClient;
     private final List<WebhookTransformer> transformers;
+    private final TemplateEngine templateEngine;
 
     private Webhooks(
             ScheduledExecutorService scheduler,
@@ -42,7 +51,14 @@ public class Webhooks extends PostServeAction {
       this.scheduler = scheduler;
       this.httpClient = httpClient;
       this.transformers = transformers;
+
+      this.templateEngine = new TemplateEngine(
+                Collections.emptyMap(),
+                null,
+                Collections.emptySet()
+        );
     }
+
 
     public Webhooks() {
       this(Executors.newScheduledThreadPool(10), HttpClientFactory.createClient(), new ArrayList<WebhookTransformer>());
@@ -65,10 +81,11 @@ public class Webhooks extends PostServeAction {
             new Runnable() {
                 @Override
                 public void run() {
-                    WebhookDefinition definition = parameters.as(WebhookDefinition.class);
+                    WebhookDefinition definition = WebhookDefinition.from(parameters);
                     for (WebhookTransformer transformer: transformers) {
                         definition = transformer.transform(serveEvent, definition);
                     }
+                    definition = applyTemplating(definition, serveEvent);
                     HttpUriRequest request = buildRequest(definition);
 
                     try (CloseableHttpResponse response = httpClient.execute(request)) {
@@ -93,7 +110,7 @@ public class Webhooks extends PostServeAction {
     private static HttpUriRequest buildRequest(WebhookDefinition definition) {
         HttpUriRequest request = getHttpRequestFor(
                 definition.getMethod(),
-                definition.getUrl().toString()
+                definition.getUrl()
         );
 
         for (HttpHeader header: definition.getHeaders().all()) {
@@ -103,6 +120,7 @@ public class Webhooks extends PostServeAction {
         if (definition.getMethod().hasEntity()) {
             HttpEntityEnclosingRequestBase entityRequest = (HttpEntityEnclosingRequestBase) request;
             entityRequest.setEntity(new ByteArrayEntity(definition.getBinaryBody()));
+//            entityRequest.setEntity(new ByteArrayEntity(body));
         }
 
         return request;
@@ -110,5 +128,30 @@ public class Webhooks extends PostServeAction {
 
     public static WebhookDefinition webhook() {
         return new WebhookDefinition();
+    }
+
+    private WebhookDefinition applyTemplating(WebhookDefinition webhookDefinition, ServeEvent serveEvent) {
+
+        final Map<String, Object> model = new HashMap<>();
+        model.put("parameters", webhookDefinition.getExtraParameters() != null ?
+                webhookDefinition.getExtraParameters() :
+                Collections.<String, Object>emptyMap());
+        model.put("originalRequest", RequestTemplateModel.from(serveEvent.getRequest()));
+        model.put("originalResponse", ResponseTemplateModel.from(serveEvent.getResponse()));
+
+        WebhookDefinition renderedWebhookDefinition = webhookDefinition;
+        if (webhookDefinition.getBody() != null) {
+            try {
+                renderedWebhookDefinition = webhookDefinition.withBody(renderTemplate(model, webhookDefinition.getBody()));
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+
+        return renderedWebhookDefinition;
+    }
+
+    private String renderTemplate(Object context, String value) throws IOException {
+        return templateEngine.getUncachedTemplate(value).apply(context);
     }
 }

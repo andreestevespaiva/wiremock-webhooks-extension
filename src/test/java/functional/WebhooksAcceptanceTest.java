@@ -16,6 +16,7 @@ import static com.github.tomakehurst.wiremock.core.WireMockConfiguration.options
 import static com.github.tomakehurst.wiremock.http.RequestMethod.GET;
 import static com.github.tomakehurst.wiremock.http.RequestMethod.POST;
 import static java.util.concurrent.TimeUnit.SECONDS;
+import static org.apache.http.entity.ContentType.APPLICATION_JSON;
 import static org.apache.http.entity.ContentType.TEXT_PLAIN;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
@@ -32,6 +33,7 @@ import com.github.tomakehurst.wiremock.junit.WireMockRule;
 import java.util.concurrent.CountDownLatch;
 import org.apache.http.entity.StringEntity;
 import org.junit.Before;
+import org.junit.Ignore;
 import org.junit.Rule;
 import org.junit.Test;
 import org.wiremock.webhooks.Webhooks;
@@ -112,6 +114,35 @@ public class WebhooksAcceptanceTest {
     }
 
     @Test
+    public void firesASingleWebhookWhenBodyTransformed() throws Exception {
+        rule.stubFor(post(urlPathEqualTo("/something-async"))
+                .willReturn(aResponse().withBody("{ \"id\": \"543\" }").withStatus(200))
+                .withPostServeAction("webhook", webhook()
+                        .withMethod(POST)
+                        .withUrl("http://localhost:" + targetServer.port() + "/callback")
+                        .withHeader("Content-Type", "application/json")
+                        .withBody("{ \"result\": \"{{jsonPath originalResponse.body '$.id'}}\" }"))
+        );
+
+        verify(0, postRequestedFor(anyUrl()));
+
+        client.post("/something-async", new StringEntity("{\"id\":\"123\"}", APPLICATION_JSON));
+
+        waitForRequestToTargetServer();
+
+        targetServer.verify(1, postRequestedFor(urlEqualTo("/callback"))
+                .withHeader("Content-Type", equalTo("application/json"))
+                .withRequestBody(equalToJson("{ \"result\": \"543\" }"))
+        );
+
+        assertThat(notifier.getInfoMessages(), hasItem(allOf(
+                containsString("Webhook POST request to"),
+                containsString("/callback returned status"),
+                containsString("200")
+        )));
+    }
+
+    @Test
     public void firesMinimalWebhookWithTransformerApplied() throws Exception {
         rule.stubFor(post(urlPathEqualTo("/something-async"))
             .willReturn(aResponse().withStatus(200))
@@ -132,7 +163,7 @@ public class WebhooksAcceptanceTest {
     }
 
     private void waitForRequestToTargetServer() throws Exception {
-        latch.await(2, SECONDS);
+        latch.await(10, SECONDS);
         assertThat("Timed out waiting for target server to receive a request",
             latch.getCount(), is(0L));
     }
