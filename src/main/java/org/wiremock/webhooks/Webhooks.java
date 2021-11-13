@@ -85,6 +85,8 @@ public class Webhooks extends PostServeAction {
                     for (WebhookTransformer transformer: transformers) {
                         definition = transformer.transform(serveEvent, definition);
                     }
+                    notifier().info(String.format("print all headers %s ", parameters.getMetadata("headers")));
+
                     definition = applyTemplating(definition, serveEvent);
                     HttpUriRequest request = buildRequest(definition);
 
@@ -113,6 +115,8 @@ public class Webhooks extends PostServeAction {
                 definition.getUrl()
         );
 
+
+
         for (HttpHeader header: definition.getHeaders().all()) {
             request.addHeader(header.key(), header.firstValue());
         }
@@ -139,7 +143,14 @@ public class Webhooks extends PostServeAction {
         model.put("originalRequest", RequestTemplateModel.from(serveEvent.getRequest()));
         model.put("originalResponse", ResponseTemplateModel.from(serveEvent.getResponse()));
 
-        WebhookDefinition renderedWebhookDefinition = webhookDefinition;
+        WebhookDefinition renderedWebhookDefinition = webhookDefinition.withHeaders(
+                webhookDefinition.getHeaders().all().stream()
+                        .map(header -> new HttpHeader(header.key(), header.values().stream()
+                                .map(value -> renderTemplate(model, value))
+                                .collect(toList()))
+                        ).collect(toList())
+        );
+
         if (webhookDefinition.getBody() != null) {
             try {
                 renderedWebhookDefinition = webhookDefinition.withBody(renderTemplate(model, webhookDefinition.getBody()));
@@ -151,7 +162,13 @@ public class Webhooks extends PostServeAction {
         return renderedWebhookDefinition;
     }
 
-    private String renderTemplate(Object context, String value) throws IOException {
-        return templateEngine.getUncachedTemplate(value).apply(context);
+    private String renderTemplate(Object context, String value) {
+        String template = null;
+        try {
+            template = templateEngine.getUncachedTemplate(value).apply(context);
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+        return template;
     }
 }
