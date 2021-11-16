@@ -143,7 +143,9 @@ public class Webhooks extends PostServeAction {
         model.put("originalRequest", RequestTemplateModel.from(serveEvent.getRequest()));
         model.put("originalResponse", ResponseTemplateModel.from(serveEvent.getResponse()));
 
-        WebhookDefinition renderedWebhookDefinition = webhookDefinition.withHeaders(
+        WebhookDefinition renderedWebhookDefinition = webhookDefinition
+                .withUrl(renderTemplate(model, webhookDefinition.getUrl()))
+                .withHeaders(
                 webhookDefinition.getHeaders().all().stream()
                         .map(header -> new HttpHeader(header.key(), header.values().stream()
                                 .map(value -> renderTemplate(model, value))
