@@ -85,7 +85,6 @@ public class Webhooks extends PostServeAction {
                     for (WebhookTransformer transformer: transformers) {
                         definition = transformer.transform(serveEvent, definition);
                     }
-                    notifier().info(String.format("print all headers %s ", parameters.getMetadata("headers")));
 
                     definition = applyTemplating(definition, serveEvent);
                     HttpUriRequest request = buildRequest(definition);
@@ -115,8 +114,6 @@ public class Webhooks extends PostServeAction {
                 definition.getUrl()
         );
 
-
-
         for (HttpHeader header: definition.getHeaders().all()) {
             request.addHeader(header.key(), header.firstValue());
         }
@@ -124,7 +121,6 @@ public class Webhooks extends PostServeAction {
         if (definition.getMethod().hasEntity()) {
             HttpEntityEnclosingRequestBase entityRequest = (HttpEntityEnclosingRequestBase) request;
             entityRequest.setEntity(new ByteArrayEntity(definition.getBinaryBody()));
-//            entityRequest.setEntity(new ByteArrayEntity(body));
         }
 
         return request;
