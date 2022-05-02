@@ -41,6 +41,7 @@ public class WebhookDefinition {
         this.headers = newArrayList(headers.all());
         this.body = Body.fromOneOf(null,body,jsonBody,base64Body);
         this.delay = delay;
+        this.delay = delay != null ? delay : getDelayDistribution(parameters);
         this.parameters = parameters;
     }
 
