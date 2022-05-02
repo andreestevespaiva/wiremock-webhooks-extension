@@ -171,4 +171,9 @@ public class WebhookDefinition {
     public Parameters getExtraParameters() {
         return this.parameters;
     }
+
+    @JsonIgnore
+    public long getDelaySampleMillis() {
+        return delay != null ? delay.sampleMillis() : 0L;
+    }
 }

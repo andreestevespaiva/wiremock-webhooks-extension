@@ -34,6 +34,7 @@ import static com.github.tomakehurst.wiremock.common.Exceptions.throwUnchecked;
 import static com.github.tomakehurst.wiremock.common.LocalNotifier.notifier;
 import static com.github.tomakehurst.wiremock.http.HttpClientFactory.getHttpRequestFor;
 import static java.util.Collections.singletonList;
+import static java.util.concurrent.TimeUnit.MILLISECONDS;
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static java.util.stream.Collectors.toList;
 
@@ -76,35 +77,45 @@ public class Webhooks extends PostServeAction {
     @Override
     public void doAction(final ServeEvent serveEvent, final Admin admin, final Parameters parameters) {
         final Notifier notifier = notifier();
+        WebhookDefinition definition;
+        HttpUriRequest request;
+
+        try {
+            definition = WebhookDefinition.from(parameters);
+            for (WebhookTransformer transformer: transformers) {
+                definition = transformer.transform(serveEvent, definition);
+            }
+
+            definition = applyTemplating(definition, serveEvent);
+            request = buildRequest(definition);
+        }catch (Exception e) {
+            notifier().error("Exception thrown while configuring webhook", e);
+            return;
+        }
+
+        final WebhookDefinition finalDefinition = definition;
 
         scheduler.schedule(
             new Runnable() {
                 @Override
                 public void run() {
-                    WebhookDefinition definition = WebhookDefinition.from(parameters);
-                    for (WebhookTransformer transformer: transformers) {
-                        definition = transformer.transform(serveEvent, definition);
-                    }
-
-                    definition = applyTemplating(definition, serveEvent);
-                    HttpUriRequest request = buildRequest(definition);
-
                     try (CloseableHttpResponse response = httpClient.execute(request)) {
                         notifier.info(
                             String.format("Webhook %s request to %s returned status %s\n\n%s",
-                                definition.getMethod(),
-                                definition.getUrl(),
+                                finalDefinition.getMethod(),
+                                finalDefinition.getUrl(),
                                 response.getStatusLine(),
                                 EntityUtils.toString(response.getEntity())
                             )
                         );
                     } catch (IOException e) {
-                        notifier().error(String.format("Failed to fire webhook %s %s", definition.getMethod(), definition.getUrl()), e);
+                        notifier().error(String.format("Failed to fire webhook %s %s", finalDefinition.getMethod(),
+                                finalDefinition.getUrl()), e);
                     }
                 }
             },
-            0L,
-            SECONDS
+            finalDefinition.getDelaySampleMillis(),
+            MILLISECONDS
         );
     }
 
