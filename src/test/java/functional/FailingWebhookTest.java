@@ -17,10 +17,14 @@ import static org.junit.Assert.assertThat;
 import static org.wiremock.webhooks.Webhooks.webhook;
 
 import com.github.tomakehurst.wiremock.client.WireMock;
+import com.github.tomakehurst.wiremock.extension.Parameters;
 import com.github.tomakehurst.wiremock.http.Request;
 import com.github.tomakehurst.wiremock.http.RequestListener;
 import com.github.tomakehurst.wiremock.http.Response;
 import com.github.tomakehurst.wiremock.junit.WireMockRule;
+
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import org.apache.http.entity.StringEntity;
 import org.junit.Before;
@@ -73,13 +77,21 @@ public class FailingWebhookTest {
 
   @Test
   public void failWhenExecutingTheWebhook() throws Exception {
+    Map<String,Object> param = new HashMap<>();
+    Map<String, Object> delay = new HashMap<>();
+    delay.put("milliseconds",5000);
+    delay.put("type","fixed");
+    param.put("delay", delay);
+    Parameters parameters = Parameters.of(param);
     rule.stubFor(post(urlPathEqualTo("/something-async"))
         .willReturn(aResponse().withStatus(200))
         .withPostServeAction("webhook", webhook()
             .withMethod(POST)
             .withUrl("http://localhost:" + targetServer.port() + "/callback")
             .withHeader("Content-Type", "application/json")
-            .withBody("{ \"result\": \"SUCCESS\" }"))
+            .withBody("{ \"result\": \"SUCCESS\" }")
+            .withExtraParameters(parameters)
+        )
     );
 
     verify(0, postRequestedFor(anyUrl()));

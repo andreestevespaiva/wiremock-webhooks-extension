@@ -10,6 +10,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.github.tomakehurst.wiremock.common.Metadata;
 import com.github.tomakehurst.wiremock.extension.Parameters;
 import com.github.tomakehurst.wiremock.http.*;
+import org.wiremock.webhooks.adapters.DelayDistributionAdapter;
 
 import java.util.Collection;
 import java.util.List;
@@ -98,16 +99,25 @@ public class WebhookDefinition {
         return singletonList(obj.toString());
     }
 
+    private static Metadata getExtraParametersFromParam(Parameters parameters){
+        try {
+            return parameters.getMetadata("extraParameters");
+        }catch (Exception ex) {
+            return null;
+        }
+    }
+
     private static DelayDistribution getDelayDistribution(Parameters parameters) {
         Metadata delayParams = null;
 
         try {
-            delayParams = parameters.getMetadata("delay");
+            delayParams = getExtraParametersFromParam(parameters);
+            delayParams = delayParams == null ? parameters.getMetadata("delay"): delayParams.getMetadata("delay");
         }catch (Exception ex) {
             return null;
         }
 
-        return delayParams.as(DelayDistribution.class);
+        return delayParams.as(DelayDistributionAdapter.class);
     }
 
     public RequestMethod getMethod() {
@@ -164,6 +174,11 @@ public class WebhookDefinition {
         return this;
     }
 
+    public WebhookDefinition withExtraParameters(Parameters parameters) {
+        this.parameters = parameters;
+        return this;
+    }
+
     public WebhookDefinition withBinaryBody(byte[] body) {
         this.body = new Body(body);
         return this;
@@ -175,6 +190,9 @@ public class WebhookDefinition {
 
     @JsonIgnore
     public long getDelaySampleMillis() {
+        if (delay == null){
+            delay = getDelayDistribution(parameters);
+        }
         return delay != null ? delay.sampleMillis() : 0L;
     }
 }
